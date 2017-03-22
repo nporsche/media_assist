@@ -14,15 +14,17 @@ import (
 )
 
 var (
-	spath       string
-	dpath       string
-	filePattern string
+	spath         string
+	dpath         string
+	filePattern   string
+	keepIfExisted bool
 )
 
 func main() {
 	flag.StringVar(&spath, "spath", "./", "search source path")
 	flag.StringVar(&dpath, "dpath", "./", "destination path")
 	flag.StringVar(&filePattern, "file", "*", "file pattern")
+	flag.BoolVar(&keepIfExisted, "keep", true, "keep with a new name if filename exists")
 	flag.Parse()
 
 	filepath.Walk(spath, visit)
@@ -56,6 +58,7 @@ func visit(path string, f os.FileInfo, err error) error {
 
 	for i := 0; ; i++ {
 		if _, err := os.Stat(fileFullName); err == nil {
+			//source file is not moved
 			if i == 0 {
 				targetFileName = tm.Format("2006-01-02 150405") + filepath.Ext(f.Name())
 			} else {
@@ -65,6 +68,9 @@ func visit(path string, f os.FileInfo, err error) error {
 			_, err = exec.Command("mv", "-n", fileFullName, targetFileFullName).Output()
 			if err != nil {
 				log.Printf("FAILED: mv -n %s %s\n", fileFullName, targetFileFullName)
+				break
+			}
+			if !keepIfExisted {
 				break
 			}
 		} else {
