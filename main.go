@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"flag"
+
 	"github.com/rwcarlsen/goexif/exif"
 	"github.com/rwcarlsen/goexif/mknote"
 )
@@ -24,9 +26,9 @@ func main() {
 	flag.StringVar(&spath, "spath", "./", "search source path")
 	flag.StringVar(&dpath, "dpath", "./", "destination path")
 	flag.StringVar(&filePattern, "file", "*", "file pattern")
-	flag.BoolVar(&keepIfExisted, "keep", true, "keep with a new name if filename exists")
+	//flag.BoolVar(&keepIfExisted, "keep", true, "keep with a new name if filename exists")
 	flag.Parse()
-
+	filePattern = strings.ToLower(filePattern)
 	filepath.Walk(spath, visit)
 }
 
@@ -36,7 +38,7 @@ func visit(path string, f os.FileInfo, err error) error {
 	}
 	fileName := f.Name()
 	fileFullName := path
-	if ok, err := filepath.Match(filePattern, fileName); !ok || err != nil {
+	if ok, err := filepath.Match(filePattern, strings.ToLower(fileName)); !ok || err != nil {
 		log.Println("WARNING: not match pattern", f.Name())
 		return nil
 	}
