@@ -16,19 +16,20 @@ import (
 )
 
 var (
-	spath         string
-	dpath         string
-	filePattern   string
-	keepIfExisted bool
+	spath          string
+	dpath          string
+	filePatternRaw string
+	filePattern    []string
+	keepIfExisted  bool
 )
 
 func main() {
 	flag.StringVar(&spath, "spath", "./", "search source path")
 	flag.StringVar(&dpath, "dpath", "./", "destination path")
-	flag.StringVar(&filePattern, "file", "*", "file pattern")
+	flag.StringVar(&filePatternRaw, "file", "*", "file pattern")
 	//flag.BoolVar(&keepIfExisted, "keep", true, "keep with a new name if filename exists")
 	flag.Parse()
-	filePattern = strings.ToLower(filePattern)
+	filePattern = strings.Split(strings.ToLower(filePatternRaw), ";")
 	filepath.Walk(spath, visit)
 }
 
@@ -38,10 +39,18 @@ func visit(path string, f os.FileInfo, err error) error {
 	}
 	fileName := f.Name()
 	fileFullName := path
-	if ok, err := filepath.Match(filePattern, strings.ToLower(fileName)); !ok || err != nil {
+	match := false
+	for _, pattern := range filePattern {
+		if ok, err := filepath.Match(pattern, strings.ToLower(fileName)); err == nil && ok {
+			match = true
+			break
+		}
+	}
+	if !match {
 		log.Println("WARNING: not match pattern", f.Name())
 		return nil
 	}
+
 	tm, err := getExifDatetime(fileFullName)
 	if err != nil {
 		log.Printf("WARNING: cannot get exif info from %s use mod time instead\n", fileFullName)
