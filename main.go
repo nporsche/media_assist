@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,14 +15,12 @@ import (
 	"time"
 
 	"flag"
-
-	"github.com/rwcarlsen/goexif/exif"
-	"github.com/rwcarlsen/goexif/mknote"
 )
 
 var (
 	spath          string
 	dpath          string
+	unpath         string
 	filePatternRaw string
 	filePattern    []string
 )
@@ -28,6 +28,7 @@ var (
 func main() {
 	flag.StringVar(&spath, "spath", "./", "search source path")
 	flag.StringVar(&dpath, "dpath", "./", "destination path")
+	flag.StringVar(&unpath, "unpath", "./", "path that has unhandled files")
 	flag.StringVar(&filePatternRaw, "file", "*", "file pattern")
 	flag.Parse()
 	filePattern = strings.Split(strings.ToLower(filePatternRaw), ";")
@@ -48,15 +49,17 @@ func visit(path string, f os.FileInfo, err error) error {
 		}
 	}
 	if !match {
-		log.Println("WARNING: not match pattern", f.Name())
+		//log.Println("WARNING: not match pattern", f.Name())
 		return nil
 	}
 
 	tm, err := getExifDatetime(fileFullName)
 	if err != nil {
-		log.Printf("WARNING: cannot get exif info from %s use mod time instead\n", fileFullName)
-		tm = f.ModTime()
+		log.Printf("FAILED: cannot get exif info from %s and mv to %s", fileFullName, unpath)
+		exec.Command("mv", fileFullName, unpath).Output()
+		return nil
 	}
+	tm = tm.Local()
 	destinateDir := filepath.Join(dpath, fmt.Sprintf("%4d", tm.Year()), fmt.Sprintf("%02d", int(tm.Month())))
 
 	_, err = exec.Command("mkdir", "-p", destinateDir).Output()
@@ -69,7 +72,7 @@ func visit(path string, f os.FileInfo, err error) error {
 	var targetFileFullName string
 
 	for i := 0; ; i++ {
-		if _, err := os.Stat(fileFullName); err == nil {
+		if fileExists(fileFullName) {
 			//source file is not moved
 			if i == 0 {
 				targetFileName = tm.Format("2006-01-02 150405") + filepath.Ext(f.Name())
@@ -77,16 +80,24 @@ func visit(path string, f os.FileInfo, err error) error {
 				targetFileName = fmt.Sprintf("%s(%d)%s", tm.Format("2006-01-02 150405"), i, filepath.Ext(f.Name()))
 			}
 			targetFileFullName = filepath.Join(destinateDir, targetFileName)
-			_, err = exec.Command("mv", "-n", fileFullName, targetFileFullName).Output()
-			if err != nil {
-				log.Printf("FAILED: mv -n %s %s\n", fileFullName, targetFileFullName)
-				break
+
+			if targetFileFullName == fileFullName {
+				return nil
 			}
-			d1 := digest(targetFileFullName)
-			d2 := digest(fileFullName)
-			if d1 == d2 {
-				log.Printf("INFO: IGNORE mv %s %s because same digest %s\n", fileFullName, targetFileFullName, d1)
-				break
+
+			if fileExists(targetFileFullName) {
+				d1 := digest(targetFileFullName)
+				d2 := digest(fileFullName)
+				if d1 == d2 {
+					os.Remove(fileFullName)
+					log.Printf("INFO: rm %s because %s same digest %s\n", fileFullName, targetFileFullName, d1)
+					return nil
+				}
+			} else {
+				_, err = exec.Command("mv", "-n", fileFullName, targetFileFullName).Output()
+				if err != nil {
+					panic(err)
+				}
 			}
 		} else {
 			break
@@ -97,23 +108,46 @@ func visit(path string, f os.FileInfo, err error) error {
 	return nil
 }
 
-func getExifDatetime(fname string) (tm time.Time, err error) {
-	f, err := os.Open(fname)
+func getExifDatetime(fname string) (exifCreateTM time.Time, err error) {
+	//cmd := fmt.Sprintf(`"%s" |grep -i "Track Create Date"|awk -F ": " '{print $2}'`, fname)
+	//Creation Date                   : 2018:09:16 11:44:34+08:00
+	out, err := exec.Command("/usr/local/bin/exiftool", fname).Output()
 	if err != nil {
-		return tm, err
+		return exifCreateTM, err
 	}
-
-	// Optionally register camera makenote data parsing - currently Nikon and
-	// Canon are supported.
-	exif.RegisterParsers(mknote.All...)
-
-	x, err := exif.Decode(f)
-	if err != nil {
-		return tm, err
+	var createTm *time.Time
+	var fileMod *time.Time
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "Create Date") {
+			//Mon Jan 2 15:04:05 -0700 MST 2006
+			tmString := strings.Split(line, ": ")[1]
+			tm, err := time.ParseInLocation("2006:01:02 15:04:05", tmString, time.UTC)
+			if err == nil {
+				createTm = &tm
+			}
+		} else if strings.HasPrefix(line, "File Modification Date/Time") {
+			tmString := strings.Split(line, ": ")[1]
+			tm, err := time.Parse("2006:01:02 15:04:05-07:00", tmString)
+			if err == nil {
+				fileMod = &tm
+			}
+		}
+		if createTm != nil && fileMod != nil {
+			break
+		}
 	}
-
-	// Two convenience functions exist for date/time taken and GPS coords:
-	return x.DateTime()
+	if createTm == nil && fileMod == nil {
+		return exifCreateTM, errors.New("Failed get exif info because not prefix Create Date")
+	}
+	if createTm != nil {
+		exifCreateTM = *createTm
+	} else {
+		exifCreateTM = *fileMod
+	}
+	log.Printf("INFO: %s exif date time %v", fname, exifCreateTM)
+	return exifCreateTM, nil
 }
 
 func digest(filePath string) string {
@@ -129,4 +163,12 @@ func digest(filePath string) string {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
 }
