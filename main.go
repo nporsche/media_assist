@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -20,14 +23,12 @@ var (
 	dpath          string
 	filePatternRaw string
 	filePattern    []string
-	keepIfExisted  bool
 )
 
 func main() {
 	flag.StringVar(&spath, "spath", "./", "search source path")
 	flag.StringVar(&dpath, "dpath", "./", "destination path")
 	flag.StringVar(&filePatternRaw, "file", "*", "file pattern")
-	//flag.BoolVar(&keepIfExisted, "keep", true, "keep with a new name if filename exists")
 	flag.Parse()
 	filePattern = strings.Split(strings.ToLower(filePatternRaw), ";")
 	filepath.Walk(spath, visit)
@@ -81,7 +82,10 @@ func visit(path string, f os.FileInfo, err error) error {
 				log.Printf("FAILED: mv -n %s %s\n", fileFullName, targetFileFullName)
 				break
 			}
-			if !keepIfExisted {
+			d1 := digest(targetFileFullName)
+			d2 := digest(fileFullName)
+			if d1 == d2 {
+				log.Printf("INFO: IGNORE mv %s %s because same digest %s\n", fileFullName, targetFileFullName, d1)
 				break
 			}
 		} else {
@@ -110,4 +114,19 @@ func getExifDatetime(fname string) (tm time.Time, err error) {
 
 	// Two convenience functions exist for date/time taken and GPS coords:
 	return x.DateTime()
+}
+
+func digest(filePath string) string {
+	file, err := os.Open(filePath)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		panic(err)
+	}
+
+	return hex.EncodeToString(hash.Sum(nil))
 }
