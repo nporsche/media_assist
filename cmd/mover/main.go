@@ -36,6 +36,10 @@ func main() {
 }
 
 func visit(path string, f os.FileInfo, err error) error {
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
 	if f.IsDir() {
 		return nil
 	}
